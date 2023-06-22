@@ -7,6 +7,7 @@ outputsize = 2 # number of output channels
 input_shape = [128,128,128,1]
 output_shape = [128,128,128,outputsize]
 
+inputs = tf.keras.Input(shape = input_shape)
 unet3 = unet3plus(inputs, 
                   rank = 3,  # dimension
                   n_outputs = outputsize, 
