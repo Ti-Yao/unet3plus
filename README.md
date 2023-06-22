@@ -1,4 +1,6 @@
 ### Example usage in tensorflow
+
+```python 
 from unet3plus import *
 outputsize = 2 # number of output channels
 
@@ -18,3 +20,5 @@ unet3 = unet3plus(inputs,
                   CGM = 0) # leave this 0 as it doesn't seem to work
 
 model = tf.keras.Model(inputs = inputs, outputs = unet3.outputs())
+
+```
