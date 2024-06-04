@@ -15,10 +15,9 @@ unet3 = unet3plus(inputs,
                   dropout_rate = 0.3,
                   base_filters = 32, 
                   kernel_size = 3, 
-                  stack_num_down =  3, 
-                  stack_num_up = 3 - 1, 
-                  supervision = 1, # 1 or 0 to add supervision
-                  CGM = 0) # leave this 0 as it doesn't seem to work
+                  stack_num_down =  2, 
+                  stack_num_up = 1, 
+                  supervision = 1) # 1 or 0 to add supervision
 
 model = tf.keras.Model(inputs = inputs, outputs = unet3.outputs())
 
