@@ -1,5 +1,26 @@
 import tensorflow as tf
 import layer_util 
+from tensorflow_addons.layers import InstanceNormalization
+from tensorflow.keras.layers import Layer, Add, Activation
+from tensorflow.keras.layers import Input, Conv3D, SpatialDropout3D, UpSampling3D, MaxPooling3D, Conv2D, MaxPooling2D, Dropout, Dense, Flatten, Concatenate, Average, LeakyReLU, BatchNormalization
+def conv_res_block(inputs, num_filters):
+    # First convolutional layer
+    x1 = Conv3D(num_filters, kernel_size = 3, padding='same',kernel_initializer = 'he_normal')(inputs)
+    x1 = InstanceNormalization(axis = -1)(x1)
+    
+    # Second convolutional layer
+    x = Conv3D(num_filters, kernel_size = 3, padding='same',kernel_initializer = 'he_normal')(inputs)
+    x = InstanceNormalization(axis = -1)(x)
+    x = Activation('LeakyReLU')(x)
+    x = SpatialDropout3D(rate=0.3)(x) 
+
+    x = Conv3D(num_filters, kernel_size = 3, padding='same',kernel_initializer = 'he_normal')(x)
+    x = InstanceNormalization(axis = -1)(x)
+    
+    x = Add()([x1, x])
+    x = Activation('LeakyReLU')(x)
+    
+    return x
 
 
 class unet3plus:
@@ -7,14 +28,13 @@ class unet3plus:
                  inputs, 
                  rank = 2, 
                  n_outputs = 3, 
-                 add_dropout = False,
-                 dropout_rate = 0.5,
+                 add_dropout = True,
+                 dropout_rate = 0.3,
                  base_filters = 32, 
                  kernel_size = 3, 
                  stack_num_down = 2, 
                  stack_num_up = 1, 
                  batch_norm = True, 
-                 CGM = True, 
                  supervision= True):
         
         
@@ -28,7 +48,6 @@ class unet3plus:
         self.stack_num_down = stack_num_down
         self.stack_num_up = stack_num_up 
         self.batch_norm = batch_norm
-        self.CGM = CGM
         self.supervision = supervision
         self.conv_config = dict(kernel_size = 3,
                            padding = 'same',
@@ -53,9 +72,8 @@ class unet3plus:
         X = conv(self.n_outputs, activation = None, **self.conv_config, name = f'deepsup_conv_{scale}')(X)
         if scale != 1:
             X = upsamp(**upsamp_config, name = f'deepsup_upsamp_{scale}')(X)
-        X = tf.keras.layers.Activation(activation = 'sigmoid' if self.n_outputs == 2 else 'softmax', name = f'deepsup_activation_{scale}')(X)
+        X = tf.keras.layers.Activation(activation = 'sigmoid' if self.n_outputs == 1 else 'softmax', name = f'deepsup_activation_{scale}')(X)
         return X
-        
         
         
     def full_scale(self, inputs, to_layer, from_layer, stack_num_up):
@@ -73,7 +91,7 @@ class unet3plus:
         if to_layer < from_layer:
             X = upsamp(**upsamp_config, name = f'fullscale_{from_layer}_{to_layer}')(X)
         elif to_layer > from_layer:
-            X = maxpool(pool_size=(size , size) if self.rank == 2 else (size, size, size), name = f'fullscale_maxpool_{from_layer}_{to_layer}')(X)
+            X = maxpool(pool_size=(size , size) if self.rank == 2 else (size,size, size), name = f'fullscale_maxpool_{from_layer}_{to_layer}')(X)
         X = self.conv_block(X, self.base_filters, num_stacks = stack_num_up)
         return X
         
@@ -86,22 +104,19 @@ class unet3plus:
             if self.batch_norm:
                 X = tf.keras.layers.BatchNormalization(axis=-1)(X)
             X = tf.keras.layers.ReLU()(X)
+            
         return X
-    
     
     def encode(self, inputs, scale, num_stacks):
         maxpool = layer_util.get_nd_layer('MaxPool', self.rank)
-        
-        
-        scale -= 1 # python index
         filters = self.base_filters * 2 ** scale
         
         X = inputs
-        if scale != 0:
-            X = maxpool(pool_size=(2 , 2) if self.rank == 2 else (2,2,2), name = f'encoding_{scale}_maxpool')(X)
         X = self.conv_block(X, filters, num_stacks)
         if scale >= 4 and self.add_dropout:
-            X = tf.keras.layers.Dropout(rate = self.dropout_rate, name = f'encoding_{scale}_dropout')(X)#
+            X = tf.keras.layers.Dropout(rate = self.dropout_rate, name = f'encoding_{scale}_dropout')(X)
+        if scale != 5:
+            X = maxpool(pool_size=(2 , 2) if self.rank == 2 else (2,2,2), name = f'encoding_{scale}_maxpool')(X)
         return X
         
     def outputs(self):
@@ -113,14 +128,6 @@ class unet3plus:
         XE3 = self.encode(XE2, scale = 3, num_stacks = self.stack_num_down)
         XE4 = self.encode(XE3, scale = 4, num_stacks = self.stack_num_down)
         XE5 = self.encode(XE4, scale = 5, num_stacks = self.stack_num_down)
-        
-        """ Classification Guided Module. Part 1"""
-        if self.rank == 2 and self.CGM == True:
-            X_CGM = tf.keras.layers.Dropout(rate=0.2)(XE5)
-            X_CGM = tf.keras.layers.Conv2D(32, kernel_size=(1, 1), padding="same", strides=(1, 1))(X_CGM)
-            X_CGM = tf.keras.layers.GlobalMaxPooling2D()(X_CGM)
-            X_CGM = tf.keras.activations.sigmoid(X_CGM)
-            X_CGM = tf.keras.backend.max(X_CGM, axis=-1)
 
         XD4_from_XE5 = self.full_scale(XE5, 4, 5, self.stack_num_up)
         XD4_from_XE4 = self.full_scale(XE4, 4, 4, self.stack_num_up)
@@ -158,14 +165,6 @@ class unet3plus:
             XD2 = self.deep_sup(XD2, 2)
         XD1 = self.deep_sup(XD1, 1)
         
-        """ Classification Guided Module. Part 2"""
-        if self.rank == 2 and self.CGM == True:
-            XE5 = tf.keras.layers.multiply([X_CGM, XE5], name = f'XE5_CGM')
-            XD4 = tf.keras.layers.multiply([X_CGM, XD4], name = f'XD4_CGM')
-            XD3 = tf.keras.layers.multiply([X_CGM, XD3], name = f'XD3_CGM')
-            XD2 = tf.keras.layers.multiply([X_CGM, XD2], name = f'XD2_CGM')
-            XD1 = tf.keras.layers.multiply([X_CGM, XD1], name = f'XD1_CGM')
-
         
         if self.supervision == True:
             return [XE5,XD4,XD3,XD2,XD1]
