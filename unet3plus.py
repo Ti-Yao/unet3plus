@@ -6,15 +6,15 @@ class unet3plus:
     def __init__(self, 
                  inputs, 
                  rank = 2, 
-                 n_outputs = 2, 
-                 add_dropout = True,
-                 dropout_rate = 0.3,
+                 n_outputs = 3, 
+                 add_dropout = False,
+                 dropout_rate = 0.5,
                  base_filters = 32, 
                  kernel_size = 3, 
                  stack_num_down = 2, 
                  stack_num_up = 1, 
                  batch_norm = True, 
-                 CGM = True, 
+                 CGM = False, 
                  supervision= True):
         
         
@@ -46,7 +46,7 @@ class unet3plus:
         if self.rank == 2:
             upsamp_config = dict(size=(size , size), interpolation='bilinear')
         else:
-            upsamp_config = dict(size=(size , size, size))
+            upsamp_config = dict(size=(size , size, 1))
             
             
         X = inputs  
@@ -67,13 +67,13 @@ class unet3plus:
         if self.rank == 2:
             upsamp_config = dict(size=(size , size), interpolation='bilinear')
         else:
-            upsamp_config = dict(size=(size , size, size))
+            upsamp_config = dict(size=(size , size, 1))
         
         X = inputs        
         if to_layer < from_layer:
             X = upsamp(**upsamp_config, name = f'fullscale_{from_layer}_{to_layer}')(X)
         elif to_layer > from_layer:
-            X = maxpool(pool_size=(size , size) if self.rank == 2 else (size, size, size), name = f'fullscale_maxpool_{from_layer}_{to_layer}')(X)
+            X = maxpool(pool_size=(size , size) if self.rank == 2 else (size, size, 1), name = f'fullscale_maxpool_{from_layer}_{to_layer}')(X)
         X = self.conv_block(X, self.base_filters, num_stacks = stack_num_up)
         return X
         
@@ -85,7 +85,7 @@ class unet3plus:
             X = conv(filters, **self.conv_config)(X)
             if self.batch_norm:
                 X = tf.keras.layers.BatchNormalization(axis=-1)(X)
-            X = tf.keras.layers.ReLU()(X)
+            X = tf.keras.layers.LeakyReLU()(X)
         return X
     
     
@@ -98,7 +98,7 @@ class unet3plus:
         
         X = inputs
         if scale != 0:
-            X = maxpool(pool_size=(2 , 2) if self.rank == 2 else (2,2,2), name = f'encoding_{scale}_maxpool')(X)
+            X = maxpool(pool_size=(2 , 2) if self.rank == 2 else (2,2,1), name = f'encoding_{scale}_maxpool')(X)
         X = self.conv_block(X, filters, num_stacks)
         if scale >= 4 and self.add_dropout:
             X = tf.keras.layers.Dropout(rate = self.dropout_rate, name = f'encoding_{scale}_dropout')(X)#
